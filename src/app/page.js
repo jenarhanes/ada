@@ -1,103 +1,193 @@
-import Image from "next/image";
+'use client'
 
-export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.js
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useChat } from '@ai-sdk/react';
+import { db, createChat, getChatMessages, saveMessage, updateChatTitle, deleteChats, getChat } from '../lib/db';
+import { useRouter } from 'next/navigation';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { SendHorizontal, MinusCircle, MinusCircleIcon, SendHorizonal } from 'lucide-react';
+import ChatThread from '@/components/ChatThread';
+import '../styles/page.css';
+import Sidebar from '@/components/Sidebar';
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+
+export default function Chat() {
+  const router = useRouter();
+  const chatThreadRef = useRef(null);
+
+  const [currentChatId, setCurrentChatId] = useState(null);
+
+  const fetchedChats = useLiveQuery(() => db.chats.orderBy('createdAt').reverse().toArray());
+
+  const currentChat = useLiveQuery(() => db.chats.get(Number(currentChatId)), [currentChatId],);
+
+  const {
+    message,
+    input,
+    handleInputChange,
+    handleSubmit,
+    setMessages,
+    status,
+  } = useChat({
+    onFinish: async (message) => {
+      if (currentChatId && message.role === 'assistant') {
+        await saveMessage(currentChatId, message.role, message.content);
+      }
+    }
+  });
+
+  const navigateToChat = useCallback(
+    (chatId) => {
+      router.push(`/?chatId=${chatId}`);
+      setCurrentChatId(chatId);
+    },
+    [router],
   );
+
+  const initializeNewChat = useCallback(async() => {
+    const chatId = await createChat();
+    navigateToChat(chatId)
+  }, [navigateToChat]);
+
+  const setActiveChat = useCallback(
+    async (requestedChatId = null) => {
+      if (fetchedChats && fetchedChats.length === 0) {
+        return initializeNewChat();
+      }
+
+      if (requestedChatId) navigateToChat(Number(requestedChatId));
+
+      else navigateToChat(fetchedChats?.[0].id);
+    },
+    [navigateToChat, initializeNewChat, fetchedChats],
+  )
+
+  const generateTitle = async (message) => {
+    try {
+      const response = await fetch('/api/generate-title', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message})
+      });
+
+      if (!response.ok) throw new Error('Failed to generate title');
+
+      const { title } = await response.json();
+      if (title && currentChatId) {
+        await updateChatTitle(currentChatId, title);
+      }
+    } catch (error) {
+      console.error('Error generating title', error);
+    }
+  }
+
+  useEffect (() => {
+    if (!fetchedChats) return;
+
+    if (!currentChatId) {
+      const chatId = new URLSearchParams(window.location.search).get('chatId');
+      setActiveChat(chatId);
+    }
+
+    const loadChatMessages = async () => {
+      try {
+        const loadedMessages = await getChatMessages(currentChatId);
+        setMessages(loadedMessages);
+      } catch (error) {
+        console.error('Failed to load messages', error);
+      }
+    }
+    loadChatMessages();
+  }, [fetchedChats, currentChatId, setActiveChat, setMessages]);
+
+  useEffect(() => {
+    if (chatThreadRef.current && messages.length > 0) {
+      chatThreadRef.current.scrollTop = chatThreadRef.current.scrollHeight;
+    }
+  }, [messages, currentChatId]);
+
+  const handleChatSubmit = async (e) => {
+    e.preventDefault();
+
+    if (!input.trim()) return;
+
+    const isFirstMessage = (await getChatMessages(currentChatId)).length === 0;
+
+    await saveMessage(currentChatId, 'user', input);
+
+    if (isFirstMessage) generateTitle(input);
+
+    handleSubmit();
+  }
+
+  const handleDeleteChat = useCallback(async () => {
+    if (!currentChatId) return;
+
+    if (window.confirm('Are you sure you want to delete this chat?')) {
+      await deleteChats(currentChatId);
+      router.push('/');
+      setCurrentChatId(null);
+    }
+  }, [currentChatId, router]);
+
+  if (!fetchedChats) {
+    return <div className='loading-state'>Loading...</div>
+  }
+  return (
+    <div className='chat-container'>
+      <Sidebar
+        fetchedChats={fetchedChats}
+        currentChatId={currentChatId}
+        setCurrentChatId={setCurrentChatId}
+        initializeNewChat={initializeNewChat}
+      />
+      <div className='chat-main'>
+        <div className='chat-header'>
+          <div className='title-group'>
+            <h1 className='chat-title'>{currentChat?.title || 'New Chat'}</h1>
+            <button
+              onClick={handleDeleteChat}
+              className='delete-button'
+              aria-label='Delete chat'
+            >
+              <MinusCircleIcon className='delete-icoon' strokeWidth={1.5} />
+            </button>
+          </div>
+        </div>
+
+        <ChatThread
+          messages={messages}
+          status={status}
+          chatThreadRef={chatThreadRef}
+        />
+
+        <div className='input-area'>
+          <form onSubmit={handleChatSubmit} className='input-form'>
+            <input
+              value={input}
+              placeholder='Message AI Assistant...'
+              onChange={handleInputChange}
+              disable={status !== 'ready' && status !== undefined}
+              className='input-field'
+              aria-label='Chat input'
+            />
+            <button
+              type='submit'
+              disabled={
+                !input.trim() ||
+                status === 'submitted' ||
+                status === 'streaming'
+              }
+              className='submit-button'
+              aria-label='Send message'
+            >
+              <SendHorizonal className='submit-icon' strokeWidth={1.5} />
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  )
 }
+
+
