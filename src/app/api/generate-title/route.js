@@ -19,6 +19,6 @@ export async function POST(req) {
         });
         return NextResponse.json({ title: text });
     } catch (error) {
-        return NextResponse.json({ error: 'Failed to generate title'}, {status: 500});
+        return NextResponse.json({ error: 'Failed to generate a title'}, {status: 500});
     }
 }
